@@ -6,22 +6,37 @@
 #include <libopencm3/stm32/f4/adc.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/usart.h>
+#include <stdlib.h>
 
+typedef uint32_t u32;
+typedef uint16_t u16;
+typedef uint8_t u8;
 
 u16 adcVals[3];
-u16 adcVal;
-u16 adcOldVal;
-u16 buffer0[2];
-u16 buffer1[2];
-int jerk;
+uint16_t buffer0[3];
+uint16_t buffer1[3];
+uint16_t* config_buffer_x;
+uint16_t* config_buffer_y;
+uint16_t* config_buffer_z;
+bool configure = false;
+#define CONFIG_BUF_LEN 1000
+uint16_t a;
+uint16_t b;
+uint16_t c;
+uint16_t r;
 
 
 static void clock_setup(void);
 static void gpio_setup(void);
 static void adc_setup(void);
-static void setup_dma(u16* buf0, u16* buf1);
+static void setup_dma(uint16_t* buf0, uint16_t* buf1);
+static void setup_dma_uart3(void);
 static void setup_usart(void);
+void start_usart3_tx(uint32_t buf[], int length);
+void start_usart3_rx(uint8_t buf[], int length, bool circular);
+void stop_usart3_rx(void);
 void send_data(void);
+void auto_conf_accelo(void);
 
 static void clock_setup(){
 	rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
@@ -29,17 +44,21 @@ static void clock_setup(){
     rcc_peripheral_enable_clock(&RCC_APB2ENR, RCC_APB2ENR_ADC1EN);
     /* Clock for the ADC pins */
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPBEN);
+    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPCEN);
     /* enable clock for LEDs */
 	rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPDEN);
     /* USART 3 */
 	rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_USART3EN);
     /* DMA for ADC */
-    //rcc_peripheral_enable_clock(&RCC_AHBENR, RCC_AHBENR_DMA2EN); 
+    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA2EN); 
+    /* DMA for USART */
+    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA1EN); 
 }
 
 static void gpio_setup(){
     /* ADC */
     gpio_mode_setup(GPIOB, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO0 | GPIO1);
+    gpio_mode_setup(GPIOC, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO1);
     /* LEDs */
 	gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT,
 			GPIO_PUPD_NONE, GPIO12 | GPIO13 | GPIO14 | GPIO15);
@@ -53,7 +72,6 @@ static void adc_setup(){
     adc_disable_discontinuous_mode_regular(ADC1);
     adc_disable_discontinuous_mode_injected(ADC1);
     adc_disable_automatic_injected_group_conversion(ADC1);
-    adc_disable_scan_mode(ADC1);
     adc_disable_eoc_interrupt_injected(ADC1);
     adc_disable_awd_interrupt(ADC1);
     adc_disable_external_trigger_regular(ADC1);
@@ -63,32 +81,99 @@ static void adc_setup(){
 
 
     /* Setup for DMA mode */
-    //adc_enable_dma(ADC1);
-    adc_disable_dma(ADC1);
+    adc_enable_dma(ADC1);
+    adc_set_dma_continue(ADC1);
+    //adc_disable_dma(ADC1);
 
     adc_power_on(ADC1);
+    adc_enable_scan_mode(ADC1);
     adc_set_continuous_conversion_mode(ADC1);
-    u8 channels[] = {ADC_CHANNEL8, ADC_CHANNEL9}; 
-    adc_set_regular_sequence(ADC1, 1, channels);
-    adc_set_sample_time(ADC1, ADC_CHANNEL8, ADC_SMPR_SMP_239DOT5CYC);
-    adc_set_sample_time(ADC1, ADC_CHANNEL9, ADC_SMPR_SMP_239DOT5CYC);
-
-
-
+    u8 channels[] = {ADC_CHANNEL9, ADC_CHANNEL11, ADC_CHANNEL8}; 
+    adc_set_regular_sequence(ADC1, 3, channels);
+    adc_set_sample_time(ADC1, ADC_CHANNEL8, ADC_SMPR_SMP_480CYC);
+    adc_set_sample_time(ADC1, ADC_CHANNEL9, ADC_SMPR_SMP_480CYC);
+    adc_set_sample_time(ADC1, ADC_CHANNEL11, ADC_SMPR_SMP_480CYC);
 
 
     /* enable adc interrupts */
-    adc_eoc_after_each(ADC1);
     nvic_enable_irq(NVIC_ADC_IRQ);
-    ADC_SR(ADC1) &= ~ADC_SR_EOC;
-    adc_enable_eoc_interrupt(ADC1);
+    //adc_eoc_after_each(ADC1);
+    //ADC_SR(ADC1) &= ~ADC_SR_EOC;
+    //adc_enable_eoc_interrupt(ADC1);
     adc_clear_overrun_flag(ADC1);
-    adc_enable_overrun_interrupt(ADC1);
+    //adc_enable_overrun_interrupt(ADC1);
 
     adc_start_conversion_regular(ADC1);
 }
 
-static void setup_dma(u16* buf0, u16* buf1){
+static void setup_dma_uart3(){
+
+    dma_stream_reset(DMA1, DMA_STREAM1); /* Channel 4; RX */
+    dma_stream_reset(DMA1, DMA_STREAM4); /* Channel 7; TX */
+
+    /* Peripheral address */
+    dma_set_peripheral_address(DMA1, DMA_STREAM1, (u32)&USART3_DR);
+    dma_set_peripheral_address(DMA1, DMA_STREAM4, (u32)&USART3_DR);
+
+    /* Low level shit */
+    dma_set_dma_flow_control(DMA1, DMA_STREAM1);
+    dma_set_dma_flow_control(DMA1, DMA_STREAM4);
+
+    dma_channel_select(DMA1, DMA_STREAM1, DMA_SxCR_CHSEL_4);
+    dma_channel_select(DMA1, DMA_STREAM4, DMA_SxCR_CHSEL_7);
+
+    dma_set_priority(DMA1, DMA_STREAM1, DMA_SxCR_PL_HIGH);
+    dma_set_priority(DMA1, DMA_STREAM4, DMA_SxCR_PL_VERY_HIGH);
+
+    /* Memory stuff */
+    dma_set_peripheral_size(DMA1, DMA_STREAM1, DMA_SxCR_PSIZE_8BIT);
+    dma_set_peripheral_size(DMA1, DMA_STREAM4, DMA_SxCR_PSIZE_8BIT);
+    dma_set_memory_size(DMA1, DMA_STREAM1, DMA_SxCR_MSIZE_8BIT);
+    dma_set_memory_size(DMA1, DMA_STREAM4, DMA_SxCR_MSIZE_8BIT);
+
+    dma_enable_memory_increment_mode(DMA1, DMA_STREAM1);
+    dma_enable_memory_increment_mode(DMA1, DMA_STREAM4);
+    
+    /* Interrupts */
+    dma_clear_interrupt_flags(DMA1, DMA_STREAM1, DMA_ISR_FLAGS);
+    dma_clear_interrupt_flags(DMA1, DMA_STREAM4, DMA_ISR_FLAGS);
+    nvic_enable_irq(NVIC_DMA1_STREAM1_IRQ);
+    nvic_enable_irq(NVIC_DMA1_STREAM4_IRQ);
+}
+
+void start_usart3_tx(uint32_t buf[], int length){
+    dma_stream_reset(DMA1, DMA_STREAM4); /* Channel 7; TX */
+    dma_set_number_of_data(DMA1, DMA_STREAM4, length);
+    dma_set_memory_address(DMA1, DMA_STREAM4, (u32)buf);
+    usart_enable_tx_dma(USART3);
+    dma_clear_interrupt_flags(DMA1, DMA_STREAM4, DMA_ISR_FLAGS);
+    dma_enable_transfer_complete_interrupt(DMA1, DMA_STREAM4);
+    USART3_SR &= ~USART_SR_TC; /* clear TC bit */
+    dma_enable_stream(DMA1, DMA_STREAM4);
+}
+
+void start_usart3_rx(uint8_t buf[], int length, bool circular){
+    dma_stream_reset(DMA1, DMA_STREAM1); /* Channel 4; RX */
+    dma_set_number_of_data(DMA1, DMA_STREAM1, length);
+    dma_set_memory_address(DMA1, DMA_STREAM1, (u32)buf);
+
+    if(circular) dma_enable_circular_mode(DMA1, DMA_STREAM1);
+    else DMA_SCR(DMA1, DMA_STREAM1) &= ~DMA_SxCR_CIRC;
+
+    usart_enable_rx_dma(USART3);
+    dma_clear_interrupt_flags(DMA1, DMA_STREAM1, DMA_ISR_FLAGS);
+    dma_enable_transfer_complete_interrupt(DMA1, DMA_STREAM1);
+    dma_enable_stream(DMA1, DMA_STREAM1);
+}
+
+void stop_usart3_rx(){
+    dma_disable_transfer_complete_interrupt(DMA1, DMA_STREAM1);
+    usart_disable_rx_dma(USART3);
+    dma_disable_stream(DMA1, DMA_STREAM1);
+    DMA_SCR(DMA1, DMA_STREAM1) &= ~DMA_SxCR_CIRC;
+}
+
+static void setup_dma(uint16_t* buf0, uint16_t* buf1){
     
     dma_stream_reset(DMA2, DMA_STREAM0);
     dma_set_peripheral_address(DMA2, DMA_STREAM0, (u32)&ADC_DR(ADC1));
@@ -98,51 +183,20 @@ static void setup_dma(u16* buf0, u16* buf1){
     dma_set_memory_address(DMA2, DMA_STREAM0, (u32)buf0);
     dma_set_memory_address_1(DMA2, DMA_STREAM0, (u32)buf1);
 
-    dma_set_number_of_data(DMA2, DMA_STREAM0, 2);
+    dma_set_number_of_data(DMA2, DMA_STREAM0, 3);
     dma_set_dma_flow_control(DMA2, DMA_STREAM0);
 
-    dma_channel_select(DMA2, DMA_STREAM0, 0);
-    /* problem with the included defines. lolwut? */
-    //dma_set_priority(DMA2, DMA_STREAM0, DMA_SCR_PL_HIGH);
-    //dma_set_peripheral_size(DMA2, DMA_STREAM0, DMA_SCR_PSIZE_16BIT);
-    //dma_set_memory_size(DMA2, DMA_STREAM0, DMA_SCR_MSIZE_16BIT);
+    dma_channel_select(DMA2, DMA_STREAM0, DMA_SxCR_CHSEL_0);
+    dma_set_priority(DMA2, DMA_STREAM0, DMA_SxCR_PL_HIGH);
+    dma_set_peripheral_size(DMA2, DMA_STREAM0, DMA_SxCR_PSIZE_16BIT);
+    dma_set_memory_size(DMA2, DMA_STREAM0, DMA_SxCR_MSIZE_16BIT);
+    dma_enable_memory_increment_mode(DMA2, DMA_STREAM0);
     
     dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
-    dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM0);
     nvic_enable_irq(NVIC_DMA2_STREAM0_IRQ);
+    //dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM0);
 
     dma_enable_stream(DMA2, DMA_STREAM0);
-
-    /*
-    bool dma_get_interrupt_flag(u32 dma, u8 stream, u32 interrupt);
-    void dma_enable_transfer_error_interrupt(u32 dma, u8 stream);
-    void dma_disable_transfer_error_interrupt(u32 dma, u8 stream);
-    void dma_enable_half_transfer_interrupt(u32 dma, u8 stream);
-    void dma_disable_half_transfer_interrupt(u32 dma, u8 stream);
-    void dma_disable_transfer_complete_interrupt(u32 dma, u8 stream);
-    void dma_enable_direct_mode_error_interrupt(u32 dma, u8 stream);
-    void dma_disable_direct_mode_error_interrupt(u32 dma, u8 stream);
-    void dma_enable_fifo_error_interrupt(u32 dma, u8 stream);
-    void dma_disable_fifo_error_interrupt(u32 dma, u8 stream);
-    
-    void dma_set_transfer_mode(u32 dma, u8 stream, u32 direction);
-    void dma_enable_memory_increment_mode(u32 dma, u8 stream);
-    void dma_disable_memory_increment_mode(u32 dma, u8 channel);
-    void dma_enable_peripheral_increment_mode(u32 dma, u8 stream);
-    void dma_disable_peripheral_increment_mode(u32 dma, u8 channel);
-    void dma_enable_fixed_peripheral_increment_mode(u32 dma, u8 stream);
-    void dma_enable_circular_mode(u32 dma, u8 stream);
-    void dma_set_memory_burst(u32 dma, u8 stream, u32 burst);
-    void dma_set_peripheral_burst(u32 dma, u8 stream, u32 burst);
-    void dma_set_initial_target(u32 dma, u8 stream, u8 memory);
-    u8 dma_get_target(u32 dma, u8 stream);
-    
-    u32 dma_fifo_status(u32 dma, u8 stream);
-    void dma_enable_direct_mode(u32 dma, u8 stream);
-    void dma_enable_fifo_mode(u32 dma, u8 stream);
-    void dma_set_fifo_threshold(u32 dma, u8 stream, u32 threshold);
-    void dma_disable_stream(u32 dma, u8 stream);
-    */
 }
 
 static void setup_usart(void){
@@ -169,64 +223,178 @@ static void setup_usart(void){
 int main(void){
     clock_setup();
     gpio_setup();
-    setup_dma(buffer0, buffer1);
     adc_setup();
+    setup_dma(buffer0, buffer1);
     setup_usart();
 
+    configure = true;
+
+    while(configure);
+    gpio_set(GPIOD, GPIO15);
+
+    usart_send_blocking(USART3, 'a');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(a / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(a / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(a / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(a / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(a % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, 'b');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(b / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(b / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(b / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(b / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(b % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, 'c');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(c / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(c / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(c / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(c / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(c % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, 'r');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(r / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(r / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(r / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(r / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(r % 10) + '0');
+    usart_send_blocking(USART3, '\n');
 
     while(42){
-        gpio_clear(GPIOD, GPIO13);
-        gpio_clear(GPIOD, GPIO14);
 
-        send_data();
+    //    send_data();
     }
 }
 
 void send_data(){
-    usart_send_blocking(USART3, 'Z');
-    usart_send_blocking(USART3, ':');
+    //usart_send_blocking(USART3, 'X');
+    //usart_send_blocking(USART3, ':');
     usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(adcVals[0] / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[0] / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[0] / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[0] / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[0] % 10) + '0');
-    usart_send_blocking(USART3, '\n');
-    usart_send_blocking(USART3, 'X');
-    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, (u8)(buffer0[0] / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[0] / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[0] / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[0] / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[0] % 10) + '0');
     usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(adcVals[1] / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[1] / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[1] / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[1] / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(adcVals[1] % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    //usart_send_blocking(USART3, 'Y');
+    //usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(buffer0[1] / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[1] / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[1] / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[1] / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[1] % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    //usart_send_blocking(USART3, 'Z');
+    //usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(buffer0[2] / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[2] / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[2] / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[2] / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(buffer0[2] % 10) + '0');
     usart_send_blocking(USART3, '\n');
+}
+
+uint16_t cheap_sqrt(uint32_t p){
+    uint32_t x = 1;
+    uint32_t delta = 3;
     
+    while(x <= p){
+        x += delta;
+        delta += 2;
+    }
+    return (uint16_t)(delta/2 - 1);
+}
+
+void auto_conf_accelo(){
+    static int i = 0;
+
+    if(config_buffer_x == NULL && config_buffer_y == NULL && config_buffer_z == NULL){
+       config_buffer_x = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
+       config_buffer_y = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
+       config_buffer_z = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
+    }
+
+    if(!(i < CONFIG_BUF_LEN)){
+        configure = false;
+        gpio_set(GPIOD, GPIO14);
+        
+        int j;
+        uint32_t x_sum = 0;
+        uint32_t y_sum = 0;
+        uint32_t z_sum = 0;
+
+        for(j = 0; j < CONFIG_BUF_LEN; j++){
+            x_sum += config_buffer_x[j];           
+            y_sum += config_buffer_y[j];           
+            z_sum += config_buffer_z[j];           
+        }
+        
+        a = x_sum / CONFIG_BUF_LEN;
+        b = y_sum / CONFIG_BUF_LEN;
+        c = z_sum / CONFIG_BUF_LEN;
+        
+
+        uint32_t r_sum = 0;
+
+        for(j = 0; j < CONFIG_BUF_LEN; j++){
+            r_sum += cheap_sqrt((config_buffer_x[j] - a)*(config_buffer_x[j] - a) +
+                         (config_buffer_y[j] - b)*(config_buffer_y[j] - b) +
+                         (config_buffer_z[j] - c)*(config_buffer_z[j] - c));
+        }
+
+        r = r_sum / CONFIG_BUF_LEN;
+
+        free(config_buffer_x);
+        free(config_buffer_y);
+        free(config_buffer_z);
+        gpio_clear(GPIOD, GPIO13);
+    }else{
+        if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SxCR_CT){
+            config_buffer_x[i] = buffer1[0];
+            config_buffer_y[i] = buffer1[1];
+            config_buffer_z[i] = buffer1[2];
+        }else{
+            config_buffer_x[i] = buffer0[0];
+            config_buffer_y[i] = buffer0[1];
+            config_buffer_z[i] = buffer0[2];
+        }
+
+        i++;
+        gpio_set(GPIOD, GPIO13);
+    }
 }
 
 void adc_isr(){
-    static int i = 0;
+    //static int i = 0;
 
     if(adc_get_overrun_flag(ADC1)){     /* has a overrun occured? */
         /* recover */
         adc_clear_overrun_flag(ADC1);
         adc_start_conversion_regular(ADC1);
-        gpio_set(GPIOD, GPIO12);
     }else{      /* sequence finished? */
-        adcOldVal = adcVal;
-        adcVal = adc_read_regular(ADC1);
-        jerk = adcVal - adcOldVal;
-
-        adcVals[i] = adcVal;
-
-        if(i == 0){
-            i = 1;
-            gpio_set(GPIOD, GPIO13);
-        }
-        else if(i == 1){
-            i = 0;
-            gpio_set(GPIOD, GPIO14);
-        }
+        if(adc_eoc(ADC1)) gpio_set(GPIOD, GPIO15);
+        else gpio_set(GPIOD, GPIO12);
     }
 }
 
@@ -237,16 +405,30 @@ void dma2_stream0_isr(){
     
     /* We wants the transfer complete interrupt, Lebowsky! */
     if(DMA2_LISR & DMA_LISR_TCIF0){
-        /* Buffer 1 has been filled */
-//        if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SCR_CT){
-//            for(j = 0; j < 2; j++){
-//                adcVals[j] = buffer1[j];
-//            }
-//        /* Buffer 0 has been filled */
-//        }else{
-//            for(j = 0; j < 2; j++){
-//                adcVals[j] = buffer0[j];
-//            }
-//        }
+        dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
+        gpio_set(GPIOD, GPIO12);
+        if(configure){
+            auto_conf_accelo();
+        }
+    }
+}
+
+
+/* DMA interrupt for USART3 RX */
+void dma1_stream1_isr(){
+    /* We wants the transfer complete interrupt, Lebowsky! */
+    if(DMA1_LISR & DMA_LISR_TCIF1){
+        
+    }
+}
+
+
+/* DMA interrupt for USART3 TX */
+void dma1_stream4_isr(){
+    /* We wants the transfer complete interrupt, Lebowsky! */
+    if(DMA1_HISR & DMA_HISR_TCIF4){
+        dma_disable_transfer_complete_interrupt(DMA1, DMA_STREAM4);
+        usart_disable_tx_dma(USART3);
+        dma_disable_stream(DMA1, DMA_STREAM4);
     }
 }
