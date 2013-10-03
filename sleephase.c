@@ -6,7 +6,6 @@
 #include <libopencm3/stm32/f4/adc.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/usart.h>
-#include <stdlib.h>
 
 typedef uint32_t u32;
 typedef uint16_t u16;
@@ -15,15 +14,6 @@ typedef uint8_t u8;
 u16 adcVals[3];
 uint16_t buffer0[3];
 uint16_t buffer1[3];
-uint16_t* config_buffer_x;
-uint16_t* config_buffer_y;
-uint16_t* config_buffer_z;
-bool configure = false;
-#define CONFIG_BUF_LEN 1000
-uint16_t a;
-uint16_t b;
-uint16_t c;
-uint16_t r;
 
 
 static void clock_setup(void);
@@ -36,7 +26,6 @@ void start_usart3_tx(uint32_t buf[], int length);
 void start_usart3_rx(uint8_t buf[], int length, bool circular);
 void stop_usart3_rx(void);
 void send_data(void);
-void auto_conf_accelo(void);
 
 static void clock_setup(){
 	rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
@@ -227,63 +216,18 @@ int main(void){
     setup_dma(buffer0, buffer1);
     setup_usart();
 
-    configure = true;
-
-    while(configure);
-    gpio_set(GPIOD, GPIO15);
-
-    usart_send_blocking(USART3, 'a');
-    usart_send_blocking(USART3, ':');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(a / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(a / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(a / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(a / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(a % 10) + '0');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, 'b');
-    usart_send_blocking(USART3, ':');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(b / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(b / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(b / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(b / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(b % 10) + '0');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, 'c');
-    usart_send_blocking(USART3, ':');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(c / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(c / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(c / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(c / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(c % 10) + '0');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, 'r');
-    usart_send_blocking(USART3, ':');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(r / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(r / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(r / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(r / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(r % 10) + '0');
-    usart_send_blocking(USART3, '\n');
 
     while(42){
+        gpio_clear(GPIOD, GPIO13);
+        gpio_clear(GPIOD, GPIO14);
 
-    //    send_data();
+        send_data();
     }
 }
 
 void send_data(){
-    //usart_send_blocking(USART3, 'X');
-    //usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, 'X');
+    usart_send_blocking(USART3, ':');
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, (u8)(buffer0[0] / 10000) + '0');
     usart_send_blocking(USART3, (u8)(buffer0[0] / 1000 % 10) + '0');
@@ -293,8 +237,8 @@ void send_data(){
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, ' ');
-    //usart_send_blocking(USART3, 'Y');
-    //usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, 'Y');
+    usart_send_blocking(USART3, ':');
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, (u8)(buffer0[1] / 10000) + '0');
     usart_send_blocking(USART3, (u8)(buffer0[1] / 1000 % 10) + '0');
@@ -304,8 +248,8 @@ void send_data(){
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, ' ');
-    //usart_send_blocking(USART3, 'Z');
-    //usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, 'Z');
+    usart_send_blocking(USART3, ':');
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, (u8)(buffer0[2] / 10000) + '0');
     usart_send_blocking(USART3, (u8)(buffer0[2] / 1000 % 10) + '0');
@@ -313,76 +257,6 @@ void send_data(){
     usart_send_blocking(USART3, (u8)(buffer0[2] / 10 % 10) + '0');
     usart_send_blocking(USART3, (u8)(buffer0[2] % 10) + '0');
     usart_send_blocking(USART3, '\n');
-}
-
-uint16_t cheap_sqrt(uint32_t p){
-    uint32_t x = 1;
-    uint32_t delta = 3;
-    
-    while(x <= p){
-        x += delta;
-        delta += 2;
-    }
-    return (uint16_t)(delta/2 - 1);
-}
-
-void auto_conf_accelo(){
-    static int i = 0;
-
-    if(config_buffer_x == NULL && config_buffer_y == NULL && config_buffer_z == NULL){
-       config_buffer_x = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
-       config_buffer_y = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
-       config_buffer_z = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
-    }
-
-    if(!(i < CONFIG_BUF_LEN)){
-        configure = false;
-        gpio_set(GPIOD, GPIO14);
-        
-        int j;
-        uint32_t x_sum = 0;
-        uint32_t y_sum = 0;
-        uint32_t z_sum = 0;
-
-        for(j = 0; j < CONFIG_BUF_LEN; j++){
-            x_sum += config_buffer_x[j];           
-            y_sum += config_buffer_y[j];           
-            z_sum += config_buffer_z[j];           
-        }
-        
-        a = x_sum / CONFIG_BUF_LEN;
-        b = y_sum / CONFIG_BUF_LEN;
-        c = z_sum / CONFIG_BUF_LEN;
-        
-
-        uint32_t r_sum = 0;
-
-        for(j = 0; j < CONFIG_BUF_LEN; j++){
-            r_sum += cheap_sqrt((config_buffer_x[j] - a)*(config_buffer_x[j] - a) +
-                         (config_buffer_y[j] - b)*(config_buffer_y[j] - b) +
-                         (config_buffer_z[j] - c)*(config_buffer_z[j] - c));
-        }
-
-        r = r_sum / CONFIG_BUF_LEN;
-
-        free(config_buffer_x);
-        free(config_buffer_y);
-        free(config_buffer_z);
-        gpio_clear(GPIOD, GPIO13);
-    }else{
-        if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SxCR_CT){
-            config_buffer_x[i] = buffer1[0];
-            config_buffer_y[i] = buffer1[1];
-            config_buffer_z[i] = buffer1[2];
-        }else{
-            config_buffer_x[i] = buffer0[0];
-            config_buffer_y[i] = buffer0[1];
-            config_buffer_z[i] = buffer0[2];
-        }
-
-        i++;
-        gpio_set(GPIOD, GPIO13);
-    }
 }
 
 void adc_isr(){
@@ -405,10 +279,20 @@ void dma2_stream0_isr(){
     
     /* We wants the transfer complete interrupt, Lebowsky! */
     if(DMA2_LISR & DMA_LISR_TCIF0){
-        dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
-        gpio_set(GPIOD, GPIO12);
-        if(configure){
-            auto_conf_accelo();
+        /* Buffer 1 has been filled */
+        if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SxCR_CT){
+            dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
+            for(j = 0; j < 3; j++){
+                adcVals[j] = buffer1[j];
+            }
+            gpio_set(GPIOD, GPIO13);
+        /* Buffer 0 has been filled */
+        }else{
+            dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
+            for(j = 0; j < 3; j++){
+                adcVals[j] = buffer0[j];
+            }
+            gpio_set(GPIOD, GPIO14);
         }
     }
 }
