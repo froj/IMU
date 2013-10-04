@@ -26,6 +26,8 @@ uint16_t* config_buffer_z;
 #define CONFIG_BUF_LEN 1000
 bool configure = false;
 
+char usart_string[25];
+
 
 static void clock_setup(void);
 static void gpio_setup(void);
@@ -33,7 +35,7 @@ static void adc_setup(void);
 static void setup_dma(uint16_t* buf0, uint16_t* buf1);
 static void setup_dma_uart3(void);
 static void setup_usart(void);
-void start_usart3_tx(uint32_t buf[], int length);
+void start_usart3_tx(char buf[], int length);
 void start_usart3_rx(uint8_t buf[], int length, bool circular);
 void stop_usart3_rx(void);
 void send_data(void);
@@ -142,7 +144,7 @@ static void setup_dma_uart3(){
     nvic_enable_irq(NVIC_DMA1_STREAM4_IRQ);
 }
 
-void start_usart3_tx(uint32_t buf[], int length){
+void start_usart3_tx(char buf[], int length){
     dma_stream_reset(DMA1, DMA_STREAM4); /* Channel 7; TX */
     dma_set_number_of_data(DMA1, DMA_STREAM4, length);
     dma_set_memory_address(DMA1, DMA_STREAM4, (u32)buf);
@@ -219,14 +221,13 @@ static void setup_usart(void){
     usart_enable(USART3);
 }
 
-
-
 int main(void){
     clock_setup();
     gpio_setup();
     adc_setup();
     setup_dma(buffer0, buffer1);
     setup_usart();
+    setup_dma_uart3();
 
     configure = true;
 
@@ -276,11 +277,12 @@ int main(void){
     usart_send_blocking(USART3, (u8)(scale % 10) + '0');
     usart_send_blocking(USART3, '\n');
 
+    send_data();
+
     while(42){
         gpio_clear(GPIOD, GPIO13);
         gpio_clear(GPIOD, GPIO14);
 
-        send_data();
     }
 }
 
@@ -290,34 +292,36 @@ int cheap_abs(int p){
 }
 
 void send_data(){
-    if(accVals[0] < 0) usart_send_blocking(USART3, '-');
-    else usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) / 1000 % 10) + '0');
-    usart_send_blocking(USART3, '.');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) % 10) + '0');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    if(accVals[1] < 0) usart_send_blocking(USART3, '-');
-    else usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) / 1000 % 10) + '0');
-    usart_send_blocking(USART3, '.');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) % 10) + '0');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    if(accVals[2] < 0) usart_send_blocking(USART3, '-');
-    else usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) / 1000 % 10) + '0');
-    usart_send_blocking(USART3, '.');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) % 10) + '0');
-    usart_send_blocking(USART3, '\n');
+    if(accVals[0] < 0) usart_string[0] = '-';
+    else  usart_string[0] = ' ';
+    usart_string[1] = (u8)(cheap_abs(accVals[0]) / 1000 % 10) + '0';
+    usart_string[2] = '.';
+    usart_string[3] = (u8)(cheap_abs(accVals[0]) / 100 % 10) + '0';
+    usart_string[4] = (u8)(cheap_abs(accVals[0]) / 10 % 10) + '0';
+    usart_string[5] = (u8)(cheap_abs(accVals[0]) % 10) + '0';
+    usart_string[6] = ' ';
+    usart_string[7] = ' ';
+    usart_string[8] = ' ';
+    if(accVals[1] < 0) usart_string[9] = '-';
+    else  usart_string[9] = ' ';
+    usart_string[10] = (u8)(cheap_abs(accVals[1]) / 1000 % 10) + '0';
+    usart_string[11] = '.';
+    usart_string[12] = (u8)(cheap_abs(accVals[1]) / 100 % 10) + '0';
+    usart_string[13] = (u8)(cheap_abs(accVals[1]) / 10 % 10) + '0';
+    usart_string[14] = (u8)(cheap_abs(accVals[1]) % 10) + '0';
+    usart_string[15] = ' ';
+    usart_string[16] = ' ';
+    usart_string[17] = ' ';
+    if(accVals[2] < 0) usart_string[18] = '-';
+    else  usart_string[18] = ' ';
+    usart_string[19] = (u8)(cheap_abs(accVals[2]) / 1000 % 10) + '0';
+    usart_string[20] = '.';
+    usart_string[21] = (u8)(cheap_abs(accVals[2]) / 100 % 10) + '0';
+    usart_string[22] = (u8)(cheap_abs(accVals[2]) / 10 % 10) + '0';
+    usart_string[23] = (u8)(cheap_abs(accVals[2]) % 10) + '0';
+    usart_string[24] = '\n';
+   
+    start_usart3_tx(usart_string, 25); 
 }
 
 uint16_t cheap_sqrt(uint32_t p){
@@ -453,5 +457,7 @@ void dma1_stream4_isr(){
         dma_disable_transfer_complete_interrupt(DMA1, DMA_STREAM4);
         usart_disable_tx_dma(USART3);
         dma_disable_stream(DMA1, DMA_STREAM4);
+
+        send_data();
     }
 }
