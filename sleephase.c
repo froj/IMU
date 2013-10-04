@@ -12,6 +12,7 @@ typedef uint16_t u16;
 typedef uint8_t u8;
 
 u16 adcVals[3];
+int accVals[3];
 uint16_t buffer0[3];
 uint16_t buffer1[3];
 
@@ -183,7 +184,7 @@ static void setup_dma(uint16_t* buf0, uint16_t* buf1){
     
     dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
     nvic_enable_irq(NVIC_DMA2_STREAM0_IRQ);
-    //dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM0);
+    dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM0);
 
     dma_enable_stream(DMA2, DMA_STREAM0);
 }
@@ -225,37 +226,39 @@ int main(void){
     }
 }
 
+int cheap_abs(int p){
+    if(p < 0) return -p;
+    else return p;
+}
+
 void send_data(){
-    usart_send_blocking(USART3, 'X');
-    usart_send_blocking(USART3, ':');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(buffer0[0] / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[0] / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[0] / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[0] / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[0] % 10) + '0');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, 'Y');
-    usart_send_blocking(USART3, ':');
-    usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(buffer0[1] / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[1] / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[1] / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[1] / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[1] % 10) + '0');
+    if(accVals[0] < 0) usart_send_blocking(USART3, '-');
+    else usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) / 1000 % 10) + '0');
+    usart_send_blocking(USART3, '.');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[0]) % 10) + '0');
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, ' ');
     usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, 'Z');
-    usart_send_blocking(USART3, ':');
+    if(accVals[1] < 0) usart_send_blocking(USART3, '-');
+    else usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) / 1000 % 10) + '0');
+    usart_send_blocking(USART3, '.');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[1]) % 10) + '0');
     usart_send_blocking(USART3, ' ');
-    usart_send_blocking(USART3, (u8)(buffer0[2] / 10000) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[2] / 1000 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[2] / 100 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[2] / 10 % 10) + '0');
-    usart_send_blocking(USART3, (u8)(buffer0[2] % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    if(accVals[2] < 0) usart_send_blocking(USART3, '-');
+    else usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) / 1000 % 10) + '0');
+    usart_send_blocking(USART3, '.');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(cheap_abs(accVals[2]) % 10) + '0');
     usart_send_blocking(USART3, '\n');
 }
 
@@ -275,23 +278,21 @@ void adc_isr(){
 
 /* DMA interrupt from the ADC's stream */
 void dma2_stream0_isr(){
-    u8 j;
-    
     /* We wants the transfer complete interrupt, Lebowsky! */
     if(DMA2_LISR & DMA_LISR_TCIF0){
         /* Buffer 1 has been filled */
         if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SxCR_CT){
             dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
-            for(j = 0; j < 3; j++){
-                adcVals[j] = buffer1[j];
-            }
+            accVals[0] = (buffer1[0] - 1736) * 1000 / 345;
+            accVals[1] = (buffer1[1] - 1724) * 1000 / 345;
+            accVals[2] = (buffer1[2] - 1752) * 1000 / 345;
             gpio_set(GPIOD, GPIO13);
         /* Buffer 0 has been filled */
         }else{
             dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
-            for(j = 0; j < 3; j++){
-                adcVals[j] = buffer0[j];
-            }
+            accVals[0] = (buffer0[0] - 1736) * 1000 / 345;
+            accVals[1] = (buffer0[1] - 1724) * 1000 / 345;
+            accVals[2] = (buffer0[2] - 1752) * 1000 / 345;
             gpio_set(GPIOD, GPIO14);
         }
     }
