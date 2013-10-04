@@ -1,5 +1,6 @@
 
 
+#include <stdlib.h>
 #include <libopencm3/stm32/f4/dma.h>
 #include <libopencm3/stm32/f4/rcc.h>
 #include <libopencm3/stm32/f4/gpio.h>
@@ -15,6 +16,15 @@ u16 adcVals[3];
 int accVals[3];
 uint16_t buffer0[3];
 uint16_t buffer1[3];
+int x_offset = 1736;
+int y_offset = 1724;
+int z_offset = 1752;
+int scale = 345;
+uint16_t* config_buffer_x;
+uint16_t* config_buffer_y;
+uint16_t* config_buffer_z;
+#define CONFIG_BUF_LEN 1000
+bool configure = false;
 
 
 static void clock_setup(void);
@@ -27,6 +37,7 @@ void start_usart3_tx(uint32_t buf[], int length);
 void start_usart3_rx(uint8_t buf[], int length, bool circular);
 void stop_usart3_rx(void);
 void send_data(void);
+void auto_conf_accelo(void);
 
 static void clock_setup(){
 	rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
@@ -217,6 +228,53 @@ int main(void){
     setup_dma(buffer0, buffer1);
     setup_usart();
 
+    configure = true;
+
+    while(configure);
+    gpio_set(GPIOD, GPIO15);
+
+    usart_send_blocking(USART3, 'a');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(x_offset / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(x_offset / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(x_offset / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(x_offset / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(x_offset % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, 'b');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(y_offset / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(y_offset / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(y_offset / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(y_offset / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(y_offset % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, 'c');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(z_offset / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(z_offset / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(z_offset / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(z_offset / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(z_offset % 10) + '0');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, 'r');
+    usart_send_blocking(USART3, ':');
+    usart_send_blocking(USART3, ' ');
+    usart_send_blocking(USART3, (u8)(scale / 10000) + '0');
+    usart_send_blocking(USART3, (u8)(scale / 1000 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(scale / 100 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(scale / 10 % 10) + '0');
+    usart_send_blocking(USART3, (u8)(scale % 10) + '0');
+    usart_send_blocking(USART3, '\n');
 
     while(42){
         gpio_clear(GPIOD, GPIO13);
@@ -262,6 +320,82 @@ void send_data(){
     usart_send_blocking(USART3, '\n');
 }
 
+uint16_t cheap_sqrt(uint32_t p){
+    uint32_t x = 1;
+    uint32_t delta = 3;
+    
+    while(x <= p){
+        x += delta;
+        delta += 2;
+    }
+    return (uint16_t)(delta/2 - 1);
+}
+
+void auto_conf_accelo(){
+    static int i = 0;
+
+    if(config_buffer_x == NULL && config_buffer_y == NULL && config_buffer_z == NULL){
+       config_buffer_x = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
+       config_buffer_y = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
+       config_buffer_z = (uint16_t*) malloc(2*CONFIG_BUF_LEN); 
+    }
+
+    if(!(i < CONFIG_BUF_LEN)){
+        /* buffer full */
+        configure = false;
+        gpio_set(GPIOD, GPIO14);
+        
+        int j;
+        uint32_t x_sum = 0;
+        uint32_t y_sum = 0;
+        uint32_t z_sum = 0;
+
+        for(j = 0; j < CONFIG_BUF_LEN; j++){
+            x_sum += config_buffer_x[j];           
+            y_sum += config_buffer_y[j];           
+            z_sum += config_buffer_z[j];           
+        }
+        
+        x_offset = x_sum / CONFIG_BUF_LEN;
+        y_offset = y_sum / CONFIG_BUF_LEN;
+        z_offset = z_sum / CONFIG_BUF_LEN;
+        
+
+        uint32_t r_sum = 0;
+
+        for(j = 0; j < CONFIG_BUF_LEN; j++){
+            r_sum += cheap_sqrt((config_buffer_x[j] - x_offset)*
+                        (config_buffer_x[j] - x_offset) +
+                        (config_buffer_y[j] - y_offset)*
+                        (config_buffer_y[j] - y_offset) +
+                        (config_buffer_z[j] - z_offset)*
+                        (config_buffer_z[j] - z_offset));
+        }
+
+        scale = r_sum / CONFIG_BUF_LEN;
+
+        free(config_buffer_x);
+        free(config_buffer_y);
+        free(config_buffer_z);
+        gpio_clear(GPIOD, GPIO13);
+        
+    }else{
+        /* not enough data collected yet */
+        if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SxCR_CT){
+            config_buffer_x[i] = buffer1[0];
+            config_buffer_y[i] = buffer1[1];
+            config_buffer_z[i] = buffer1[2];
+        }else{
+            config_buffer_x[i] = buffer0[0];
+            config_buffer_y[i] = buffer0[1];
+            config_buffer_z[i] = buffer0[2];
+        }
+
+        i++;
+        gpio_set(GPIOD, GPIO13);
+    }
+}
+
 void adc_isr(){
     //static int i = 0;
 
@@ -280,20 +414,24 @@ void adc_isr(){
 void dma2_stream0_isr(){
     /* We wants the transfer complete interrupt, Lebowsky! */
     if(DMA2_LISR & DMA_LISR_TCIF0){
-        /* Buffer 1 has been filled */
-        if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SxCR_CT){
-            dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
-            accVals[0] = (buffer1[0] - 1736) * 1000 / 345;
-            accVals[1] = (buffer1[1] - 1724) * 1000 / 345;
-            accVals[2] = (buffer1[2] - 1752) * 1000 / 345;
-            gpio_set(GPIOD, GPIO13);
-        /* Buffer 0 has been filled */
+        if(configure){
+            auto_conf_accelo();
         }else{
-            dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
-            accVals[0] = (buffer0[0] - 1736) * 1000 / 345;
-            accVals[1] = (buffer0[1] - 1724) * 1000 / 345;
-            accVals[2] = (buffer0[2] - 1752) * 1000 / 345;
-            gpio_set(GPIOD, GPIO14);
+            /* Buffer 1 has been filled */
+            if(DMA_SCR(DMA2, DMA_STREAM0) & DMA_SxCR_CT){
+                dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
+                accVals[0] = (buffer1[0] - x_offset) * 1000 / scale;
+                accVals[1] = (buffer1[1] - y_offset) * 1000 / scale;
+                accVals[2] = (buffer1[2] - z_offset) * 1000 / scale;
+                gpio_set(GPIOD, GPIO13);
+            /* Buffer 0 has been filled */
+            }else{
+                dma_clear_interrupt_flags(DMA2, DMA_STREAM0, DMA_ISR_FLAGS);
+                accVals[0] = (buffer0[0] - x_offset) * 1000 / scale;
+                accVals[1] = (buffer0[1] - y_offset) * 1000 / scale;
+                accVals[2] = (buffer0[2] - z_offset) * 1000 / scale;
+                gpio_set(GPIOD, GPIO14);
+            }
         }
     }
 }
